@@ -28,7 +28,7 @@ function json(body: unknown, status = 200, extra: Record<string, string> = {}) {
 
 export async function GET(
   req: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
     const clientIP = getClientIP(req);
@@ -39,7 +39,8 @@ export async function GET(
     const url = new URL(req.url);
     const forceRefresh = url.searchParams.get('refresh') === 'true';
 
-    const ticker = params.id.toUpperCase();
+    const { id } = await params;
+    const ticker = id.toUpperCase();
     const tokenFromList = tokenList.find(t => t.ticker.toUpperCase() === ticker);
     
     if (!tokenFromList) {
