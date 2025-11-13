@@ -22,6 +22,8 @@ export default function APIStatusDashboard() {
   const [isClient, setIsClient] = useState(false);
   const [lastUpdate, setLastUpdate] = useState<Date>(new Date());
   const [testToken, setTestToken] = useState<string>('APT');
+  const [refreshCooldown, setRefreshCooldown] = useState<number>(0);
+  const [canRefresh, setCanRefresh] = useState<boolean>(true);
   
   const initialStatus: StatusData = {
     uptime: '0m',
@@ -30,10 +32,12 @@ export default function APIStatusDashboard() {
     endpoints: [
       { name: 'Health Check', status: 'checking', responseTime: null, endpoint: '/api/health' },
       { name: 'All Tokens', status: 'checking', responseTime: null, endpoint: '/api/tokens' },
+      { name: 'Token Stats', status: 'checking', responseTime: null, endpoint: '/api/tokens/stats' },
       { name: 'Token Data', status: 'checking', responseTime: null, endpoint: `/api/token/${testToken}` },
       { name: 'Token Price', status: 'checking', responseTime: null, endpoint: `/api/token/${testToken}/price` },
       { name: 'Price Change', status: 'checking', responseTime: null, endpoint: `/api/token/${testToken}/price-change` },
       { name: 'Volume', status: 'checking', responseTime: null, endpoint: `/api/token/${testToken}/volume` },
+      { name: 'Sparkline', status: 'checking', responseTime: null, endpoint: `/api/token/${testToken}/sparkline` },
     ],
   };
   
@@ -46,6 +50,7 @@ export default function APIStatusDashboard() {
   const consecutiveErrorsRef = useRef(0);
   const isRateLimitedRef = useRef(false);
   const statusRef = useRef<StatusData>(initialStatus);
+  const refreshCooldownIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
   // Sync ref with state
   useEffect(() => {
@@ -80,6 +85,19 @@ export default function APIStatusDashboard() {
       case 'Volume':
         return body.success === true && body.data && typeof body.data === 'object' && typeof body.data.totalVolume === 'number';
 
+      case 'Sparkline':
+        // Sparkline endpoint returns success: true even if no data (empty arrays)
+        // Consider it valid if success is true and priceArray exists (even if empty)
+        return body.success === true && Array.isArray(body.priceArray);
+
+      case 'Token Stats':
+        // Token Stats endpoint returns summary and byCategory data
+        return body.success === true && 
+               body.summary && 
+               typeof body.summary.totalMarketCap === 'number' &&
+               typeof body.summary.totalVolume24h === 'number' &&
+               Array.isArray(body.byCategory);
+
       default:
         return res.ok && body.success !== false;
     }
@@ -107,10 +125,12 @@ export default function APIStatusDashboard() {
     const endpoints = [
       { name: 'Health Check', status: 'checking' as const, responseTime: null, endpoint: '/api/health' },
       { name: 'All Tokens', status: 'checking' as const, responseTime: null, endpoint: '/api/tokens' },
+      { name: 'Token Stats', status: 'checking' as const, responseTime: null, endpoint: '/api/tokens/stats' },
       { name: 'Token Data', status: 'checking' as const, responseTime: null, endpoint: `/api/token/${currentToken}` },
       { name: 'Token Price', status: 'checking' as const, responseTime: null, endpoint: `/api/token/${currentToken}/price` },
       { name: 'Price Change', status: 'checking' as const, responseTime: null, endpoint: `/api/token/${currentToken}/price-change` },
       { name: 'Volume', status: 'checking' as const, responseTime: null, endpoint: `/api/token/${currentToken}/volume` },
+      { name: 'Sparkline', status: 'checking' as const, responseTime: null, endpoint: `/api/token/${currentToken}/sparkline` },
     ];
 
     const tests = endpoints.map((ep, idx) => ({
@@ -126,7 +146,11 @@ export default function APIStatusDashboard() {
         try {
           const start = Date.now();
           // Add ?refresh=true to bypass cache when refresh button is clicked
-          const url = forceRefresh && !test.endpoint.includes('/health') && !test.endpoint.includes('/tokens')
+          // Exclude /health and /tokens (list endpoint) from refresh, but allow /tokens/stats to be refreshed
+          const shouldRefresh = forceRefresh && 
+                                test.endpoint !== '/api/health' && 
+                                test.endpoint !== '/api/tokens';
+          const url = shouldRefresh
             ? `${test.endpoint}?refresh=true`
             : test.endpoint;
           const res = await fetch(url, {
@@ -227,6 +251,85 @@ export default function APIStatusDashboard() {
     }
   };
 
+  // Check refresh cooldown status
+  const checkRefreshCooldown = useCallback(() => {
+    if (typeof window === 'undefined') return;
+    
+    const lastRefreshTime = localStorage.getItem('lastRefreshClick');
+    if (!lastRefreshTime) {
+      setCanRefresh(true);
+      setRefreshCooldown(0);
+      return;
+    }
+
+    const lastRefresh = parseInt(lastRefreshTime, 10);
+    const now = Date.now();
+    const oneHour = 60 * 60 * 1000; // 1 hour in milliseconds
+    const timeSinceLastRefresh = now - lastRefresh;
+    const remainingTime = oneHour - timeSinceLastRefresh;
+
+    if (remainingTime > 0) {
+      setCanRefresh(false);
+      setRefreshCooldown(Math.ceil(remainingTime / 1000)); // Convert to seconds
+    } else {
+      setCanRefresh(true);
+      setRefreshCooldown(0);
+      localStorage.removeItem('lastRefreshClick');
+    }
+  }, []);
+
+  // Update cooldown timer every second
+  useEffect(() => {
+    if (!isClient) return;
+
+    // Check initial cooldown status
+    checkRefreshCooldown();
+
+    // Update cooldown every second
+    refreshCooldownIntervalRef.current = setInterval(() => {
+      checkRefreshCooldown();
+    }, 1000);
+
+    return () => {
+      if (refreshCooldownIntervalRef.current) {
+        clearInterval(refreshCooldownIntervalRef.current);
+      }
+    };
+  }, [isClient, checkRefreshCooldown]);
+
+  // Format cooldown time for display
+  const formatCooldown = (seconds: number): string => {
+    if (seconds <= 0) return '';
+    
+    const hours = Math.floor(seconds / 3600);
+    const minutes = Math.floor((seconds % 3600) / 60);
+    const secs = seconds % 60;
+    
+    if (hours > 0) {
+      return `${hours}h ${minutes}m ${secs}s`;
+    } else if (minutes > 0) {
+      return `${minutes}m ${secs}s`;
+    } else {
+      return `${secs}s`;
+    }
+  };
+
+  // Handle refresh button click with cooldown check
+  const handleRefreshClick = useCallback(() => {
+    if (!canRefresh) return;
+    
+    // Store current timestamp
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('lastRefreshClick', Date.now().toString());
+    }
+    
+    // Recalculate cooldown immediately
+    checkRefreshCooldown();
+    
+    // Trigger refresh
+    checkEndpointHealth(true);
+  }, [canRefresh, checkEndpointHealth, checkRefreshCooldown]);
+
   const overallStatus =
     status.endpoints.every((ep) => ep.status === 'online')
       ? 'online'
@@ -307,10 +410,12 @@ export default function APIStatusDashboard() {
                   endpoints: [
                     { name: 'Health Check', status: prev.endpoints[0]?.status || 'checking', responseTime: prev.endpoints[0]?.responseTime || null, endpoint: '/api/health' },
                     { name: 'All Tokens', status: prev.endpoints[1]?.status || 'checking', responseTime: prev.endpoints[1]?.responseTime || null, endpoint: '/api/tokens' },
+                    { name: 'Token Stats', status: prev.endpoints[2]?.status || 'checking', responseTime: prev.endpoints[2]?.responseTime || null, endpoint: '/api/tokens/stats' },
                     { name: 'Token Data', status: 'checking', responseTime: null, endpoint: `/api/token/${newToken}` },
                     { name: 'Token Price', status: 'checking', responseTime: null, endpoint: `/api/token/${newToken}/price` },
                     { name: 'Price Change', status: 'checking', responseTime: null, endpoint: `/api/token/${newToken}/price-change` },
                     { name: 'Volume', status: 'checking', responseTime: null, endpoint: `/api/token/${newToken}/volume` },
+                    { name: 'Sparkline', status: 'checking', responseTime: null, endpoint: `/api/token/${newToken}/sparkline` },
                   ]
                 }));
               }}
@@ -376,16 +481,29 @@ export default function APIStatusDashboard() {
                 </p>
               </div>
             </div>
-            <button
-              onClick={() => checkEndpointHealth(true)}
-              className={`px-4 py-2 rounded text-sm transition-colors ${
-                isDark 
-                  ? 'bg-[#8CC84B] hover:bg-[#6BA83A] text-black font-semibold' 
-                  : 'bg-blue-600 hover:bg-blue-700 text-white'
-              }`}
-            >
-              Refresh Status
-            </button>
+            <div className="flex flex-col items-end gap-2">
+              <button
+                onClick={handleRefreshClick}
+                disabled={!canRefresh}
+                className={`px-4 py-2 rounded text-sm transition-colors ${
+                  canRefresh
+                    ? isDark 
+                      ? 'bg-[#8CC84B] hover:bg-[#6BA83A] text-black font-semibold cursor-pointer' 
+                      : 'bg-blue-600 hover:bg-blue-700 text-white cursor-pointer'
+                    : isDark
+                      ? 'bg-gray-600 text-gray-400 cursor-not-allowed opacity-50'
+                      : 'bg-gray-300 text-gray-500 cursor-not-allowed opacity-50'
+                }`}
+                title={canRefresh ? 'Refresh status now' : `Please wait ${formatCooldown(refreshCooldown)} before refreshing again`}
+              >
+                Refresh Status
+              </button>
+              {!canRefresh && refreshCooldown > 0 && (
+                <p className={`text-xs ${isDark ? 'text-gray-400' : 'text-gray-500'}`}>
+                  Next refresh in: {formatCooldown(refreshCooldown)}
+                </p>
+              )}
+            </div>
           </div>
         </div>
 

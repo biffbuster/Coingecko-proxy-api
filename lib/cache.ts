@@ -24,11 +24,24 @@ export function getFromCache(key: string, ttl: number): any | null {
     }
   }
   
-  // Clean up expired entry
-  if (cached) {
+  // Clean up expired entry (only if ttl is not Infinity, to allow stale cache retrieval)
+  if (cached && ttl !== Infinity) {
     CACHE.delete(key);
   }
   
+  return null;
+}
+
+// Get stale cache data (expired but still in cache) - useful for rate limit fallback
+export function getStaleCache(key: string): any | null {
+  const cached = CACHE.get(key);
+  if (cached) {
+    try {
+      return JSON.parse(cached.data);
+    } catch {
+      return cached.data;
+    }
+  }
   return null;
 }
 

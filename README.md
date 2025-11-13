@@ -154,6 +154,65 @@ Get launch date information from CSV.
 }
 ```
 
+### Get Historical Price Data (Sparkline)
+```
+GET /api/token/:id/sparkline
+```
+Get historical price data for drawing sparklines. Automatically calculates the time range from the token's campaign start date.
+
+**Example:** `GET /api/token/APT/sparkline`
+
+**Query Parameters:**
+- `days` (optional): Override the automatic days calculation (1-365)
+- `refresh` (optional): Bypass cache if set to `true`
+
+**Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "ticker": "APT",
+    "name": "Aptos",
+    "startDate": "March 21, 2025",
+    "coinId": "aptos",
+    "days": 365,
+    "prices": [
+      { "timestamp": 1700000000000, "price": 8.42 },
+      { "timestamp": 1700086400000, "price": 8.55 }
+    ],
+    "marketCaps": [
+      { "timestamp": 1700000000000, "marketCap": 2500000000 },
+      { "timestamp": 1700086400000, "marketCap": 2550000000 }
+    ],
+    "volumes": [
+      { "timestamp": 1700000000000, "volume": 125000000 },
+      { "timestamp": 1700086400000, "volume": 130000000 }
+    ],
+    "priceArray": [8.42, 8.55, 8.48, 8.62],
+    "timestampArray": [1700000000000, 1700086400000, 1700172800000],
+    "marketCapArray": [2500000000, 2550000000, 2530000000],
+    "volumeArray": [125000000, 130000000, 128000000],
+    "currentPrice": 8.62,
+    "startPrice": 8.42,
+    "priceChange": 2.38,
+    "priceChangePercent": 2.38,
+    "minPrice": 8.15,
+    "maxPrice": 8.85,
+    "dataPoints": 365
+  }
+}
+```
+
+**Notes:**
+- The endpoint automatically calculates the time range from the token's `startDate` in the token list
+- For tokens with future start dates, it returns the maximum available historical data (365 days)
+- Data is cached for 30 minutes
+- CoinGecko automatically determines the data interval based on the time range:
+  - 1 day: 5-minute intervals
+  - 7 days: 1-hour intervals
+  - 30 days: 4-hour intervals
+  - 90+ days: 1-day intervals
+
 ### Get Total Market Cap
 ```
 GET /api/total-market-cap
@@ -196,6 +255,15 @@ fetch('http://localhost:3000/api/tokens')
 fetch('http://localhost:3000/api/token/start-date/NEAR')
   .then(res => res.json())
   .then(data => console.log(data));
+
+// Get historical price data for sparklines
+fetch('http://localhost:3000/api/token/APT/sparkline')
+  .then(res => res.json())
+  .then(data => {
+    console.log('Price array:', data.data.priceArray);
+    console.log('Timestamps:', data.data.timestampArray);
+    // Use these arrays to draw sparklines
+  });
 ```
 
 ### cURL
@@ -208,6 +276,12 @@ curl http://localhost:3000/api/token/daily-change/INJ
 
 # Get all tokens
 curl http://localhost:3000/api/tokens
+
+# Get historical price data for sparklines
+curl http://localhost:3000/api/token/APT/sparkline
+
+# Override days calculation
+curl http://localhost:3000/api/token/APT/sparkline?days=30
 ```
 
 ### Python
@@ -223,6 +297,15 @@ print(data)
 response = requests.get('http://localhost:3000/api/token/start-date/BERA')
 data = response.json()
 print(data)
+
+# Get historical price data for sparklines
+response = requests.get('http://localhost:3000/api/token/APT/sparkline')
+data = response.json()
+price_array = data['data']['priceArray']
+timestamp_array = data['data']['timestampArray']
+# Use these arrays to draw sparklines
+print(f"Price data points: {len(price_array)}")
+print(f"Price range: ${min(price_array):.2f} - ${max(price_array):.2f}")
 ```
 
 ## ⚙️ Configuration
